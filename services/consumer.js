@@ -1,8 +1,8 @@
 const fs = require('fs-extra');
 const path = require('path');
 const axios = require('axios');
-const FormData = require('form-data');
 const rabbitMQService = require('./rabbitMQ');
+const comfyUIService = require('./comfyui-service');
 const config = require('../config/config');
 
 /**
@@ -13,6 +13,17 @@ async function startConsumer() {
     const channel = await rabbitMQService.getChannel();
     
     console.log(`"${config.rabbitMQ.queueName}" kuyruğundan mesajlar bekleniyor...`);
+    
+    // ComfyUI Servisini başlat
+    if (config.comfyUI.enabled) {
+      try {
+        await comfyUIService.initialize();
+        console.log('ComfyUI servisi başlatıldı');
+      } catch (error) {
+        console.error('ComfyUI servisi başlatılamadı:', error.message);
+        console.log('ComfyUI olmadan devam ediliyor, rastgele fotoğraf seçilecek');
+      }
+    }
     
     channel.consume(config.rabbitMQ.queueName, async (msg) => {
       if (msg !== null) {
@@ -42,7 +53,7 @@ async function startConsumer() {
  * Fotoğraf işleme isteğini işle
  * @param {Object} request - İşlenecek istek
  * @param {string} request.requestId - İstek ID
- * @param {string} request.photoUrl - Fotoğraf URL'si
+ * @param {string} request.photoUrl - Fotoğraf URL'si (giysi URL'si)
  */
 async function processPhotoRequest(request) {
   console.log(`İstek işleniyor - RequestID: ${request.requestId}, PhotoURL: ${request.photoUrl}`);
@@ -50,14 +61,70 @@ async function processPhotoRequest(request) {
   // 5 saniye gecikme
   await new Promise(resolve => setTimeout(resolve, config.photos.delay));
   
-  // Rastgele fotoğraf seç
-  const randomPhoto = await selectRandomPhoto();
-  console.log(`Rastgele fotoğraf seçildi: ${randomPhoto}`);
-  
-  // Sonucu API'ye gönder
-  await sendResultToAPI(request.requestId, randomPhoto);
-  
-  console.log(`İstek başarıyla tamamlandı - RequestID: ${request.requestId}`);
+  try {
+    let outputPhotoPath = null;
+    
+    // ComfyUI entegrasyonu etkinse ve çalışıyorsa
+    if (config.comfyUI.enabled && config.comfyUI.useVirtualTryOn && comfyUIService.connected) {
+      try {
+        console.log('ComfyUI Virtual Try-On süreci başlatılıyor...');
+        
+        // Giysi görselini indir
+        const garmentPath = await downloadImage(request.photoUrl, 'garment');
+        console.log(`Giysi görseli indirildi: ${garmentPath}`);
+        
+        // İnsan görselini al (varsayılan olarak yapılandırmadaki yolu kullan)
+        const humanImagePath = config.comfyUI.humanImagePath;
+        
+        // ComfyUI ile sanal giysi deneme işlemini gerçekleştir
+        outputPhotoPath = await comfyUIService.processVirtualTryOn(humanImagePath, garmentPath);
+        console.log(`Virtual Try-On işlemi tamamlandı: ${outputPhotoPath}`);
+      } catch (error) {
+        console.error('ComfyUI işlemi başarısız:', error.message);
+        console.log('Rastgele fotoğraf seçme moduna geçiliyor...');
+        outputPhotoPath = await selectRandomPhoto();
+      }
+    } else {
+      // ComfyUI çalışmıyorsa rastgele fotoğraf seç
+      outputPhotoPath = await selectRandomPhoto();
+    }
+    
+    // Sonucu API'ye gönder
+    await sendResultToAPI(request.requestId, outputPhotoPath);
+    
+    console.log(`İstek başarıyla tamamlandı - RequestID: ${request.requestId}`);
+  } catch (error) {
+    console.error(`İstek işleme hatası:`, error.message);
+    throw error;
+  }
+}
+
+/**
+ * URL'den görsel indir
+ * @param {string} url - İndirilecek görselin URL'si
+ * @param {string} prefix - Dosya adı öneki
+ * @returns {Promise<string>} - İndirilen görselin dosya yolu
+ */
+async function downloadImage(url, prefix = 'image') {
+  try {
+    // Geçici klasörü oluştur
+    const tempDir = path.join(__dirname, '../temp');
+    await fs.ensureDir(tempDir);
+    
+    // Dosya adını oluştur
+    const filename = `${prefix}_${Date.now()}.jpg`;
+    const filePath = path.join(tempDir, filename);
+    
+    // Görseli indir
+    const response = await axios.get(url, { responseType: 'arraybuffer' });
+    await fs.writeFile(filePath, Buffer.from(response.data));
+    
+    console.log(`Görsel indirildi: ${filePath}`);
+    return filePath;
+  } catch (error) {
+    console.error('Görsel indirme hatası:', error.message);
+    throw error;
+  }
 }
 
 /**
@@ -126,37 +193,34 @@ async function sendResultToAPI(requestId, photoPath) {
     requestBody.push(Buffer.from(`\r\n`));
     
     // Veri tiplerini belirtilen değerlere göre ayarla
-    // Multipart/form-data'da her şey string olarak gönderilir ancak
-    // ASP.NET tarafında doğru veri tiplerine dönüştürülür
     const fields = {
       // number($float) tipleri - Ondalık formatla gönder
-      'LegLength': 0.0,
-      'ArmLength': 0.0,
-      'ShoulderToCrotch': 0.0,
-      'Shoulder': 0.0,
-      'Chest': 0.0,
-      'Waist': 0.0,
-      'Hip': 0.0,
-      'Thigh': 0.0,
-      'FootSize': 40.0,
-      'LowerChest': 0.0,
+      'LegLength': '0.0',
+      'ArmLength': '0.0',
+      'ShoulderToCrotch': '0.0',
+      'Shoulder': '0.0',
+      'Chest': '0.0',
+      'Waist': '0.0',
+      'Hip': '0.0',
+      'Thigh': '0.0',
+      'FootSize': '40.0',
+      'LowerChest': '0.0',
       
       // string tipi
       'Gender': 'Male',
       'Cup': 'A',
       
       // integer($int64) tipi
-      'AppUserId': 400,
+      'AppUserId': '1',
       
       // integer($int32) tipi
-      'Height': 170,
+      'Height': '170',
       
       // boolean tipi - ASP.NET'in anlayacağı şekilde
-      'IsSuccess': true,
+      'IsSuccess': 'true',
       
       // string($date-time) tipleri - ISO formatı
       'CreateTime': new Date().toISOString()
-      // UpdateTime null olabilir, boş bırakıyoruz
     };
     
     for (const [name, value] of Object.entries(fields)) {
@@ -174,7 +238,6 @@ async function sendResultToAPI(requestId, photoPath) {
     const requestData = Buffer.concat(requestBody);
     
     console.log(`API isteği gönderiliyor... RequestID: ${requestId}`);
-    console.log(`Endpoint: ${config.api.responseEndpoint}`);
     
     // API'ye PUT isteği gönder
     const response = await axios.put(config.api.responseEndpoint, requestData, {
@@ -193,23 +256,11 @@ async function sendResultToAPI(requestId, photoPath) {
     if (error.response) {
       console.error(`Yanıt durumu: ${error.response.status}`);
       console.error(`Yanıt içeriği:`, error.response.data);
-    } else if (error.request) {
-      console.error('İstek yapıldı ama yanıt alınamadı');
-    } else {
-      console.error('İstek hatası:', error.message);
     }
-    
-    // Dosya ile ilgili daha fazla bilgi
-    try {
-      const stats = await fs.stat(photoPath);
-      console.log(`Dosya bilgileri: ${JSON.stringify(stats)}`);
-    } catch (statError) {
-      console.error(`Dosya bilgileri alınamadı: ${statError.message}`);
-    }
-    
     throw error;
   }
 }
+
 module.exports = {
   startConsumer
 };

@@ -19,6 +19,15 @@ const config = {
     directory: './photos',
     delay: 5000, // 5 saniye
     count: 5
+  },
+  comfyUI: {
+    enabled: true,                        // ComfyUI entegrasyonunu etkinleştirir/devre dışı bırakır
+    apiUrl: 'http://localhost:8188/api',  // ComfyUI API adresi
+    outputDir: './output',                // Çıktı klasörü
+    workflowPath: './workflow.json',      // Önceden hazırlanmış workflow dosyası
+    useVirtualTryOn: true,                // Virtual Try-On özelliği kullanılsın mı?
+    humanImagePath: './photos/human.jpg', // Varsayılan insan görüntüsü (RabbitMQ'dan gelmeyen durumlarda)
+    garmentDir: './garments'              // Giysi görüntülerinin saklandığı klasör
   }
 };
 
