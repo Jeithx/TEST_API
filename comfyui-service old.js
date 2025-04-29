@@ -5,6 +5,15 @@ const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const config = require('../config/config');
 
+
+function forEachNode(obj, cb) {
+  for (const id in obj) {
+    if (isNaN(id)) continue;      // 'extra' vb. meta alanlar yok sayılır
+    cb(id, obj[id]);
+  }
+}
+
+
 class ComfyUIService {
   constructor() {
     this.comfyUrl = config.comfyUI.serverUrl;
@@ -23,6 +32,7 @@ class ComfyUIService {
     console.log(`ComfyUI servisi başlatıldı. ID: ${this.clientId}`);
   }
   
+
   // WebSocket bağlantısını başlat
   async connect() {
     if (this.socket && this.connected) {
@@ -267,179 +277,201 @@ class ComfyUIService {
     });
   }
 
-  // Workflow'u insan ve kıyafet görüntüsüyle güncelle - EN BASİT VERSİYON
-  async updateWorkflowWithImages(humanImagePath, garmentImagePath = null) {
-    try {
-      // 1. Orijinal workflow dosyasını oku
-      if (!fs.existsSync(this.workflowPath)) {
-        throw new Error(`Workflow dosyası bulunamadı: ${this.workflowPath}`);
-      }
-      const workflowJson = await fs.readFile(this.workflowPath, 'utf-8');
-      let workflow = JSON.parse(workflowJson);
+  // Workflow'u insan ve kıyafet görüntüsüyle güncelle
+  // updateWorkflowWithImages fonksiyonuna eklenmesi gereken Reroute temizleme kodu:
+
+async updateWorkflowWithImages(humanImagePath, garmentImagePath = null) {
+  try {
+    // 1) Orijinal workflow dosyasını doğrudan oku
+    if (!fs.existsSync(this.workflowPath)) {
+      throw new Error(`Workflow dosyası bulunamadı: ${this.workflowPath}`);
+    }
+    const workflowJson = await fs.readFile(this.workflowPath, 'utf-8');
+    let workflowObj = JSON.parse(workflowJson);
+    
+    console.log("Orijinal workflow dosyası yüklendi.");
+    
+    // 2) Dosyayı API formatına dönüştür (eğer modern/export formatındaysa)
+    let apiWorkflow = {};
+    let humanImageNode = null;
+    let garmentImageNode = null;
+    
+    // Modern/Export formatı kontrolü
+    if (workflowObj.nodes && Array.isArray(workflowObj.nodes)) {
+      console.log("Modern/Export formatında workflow tespit edildi. API formatına dönüştürülüyor...");
       
-      console.log("Orijinal workflow dosyası yüklendi.");
+      // 2.1) ÖNEMLİ: Önce Reroute (#39) node'unu kaldır ve bağlantıları düzenle
+      let reroute39 = workflowObj.nodes.find(node => node.id === 39 && node.type === "Reroute");
       
-      // 2. Görüntüleri ComfyUI'ye yükle
-      const timestamp = Date.now();
-      const humanImageFilename = `human_${timestamp}.png`;
-      const garmentImageFilename = garmentImagePath ? `garment_${timestamp}.jpg` : null;
-      
-      console.log(`İnsan görseli yükleniyor: ${humanImageFilename}`);
-      const humanImage = await this.uploadImage(humanImagePath, humanImageFilename);
-      let garmentImage = null;
-      
-      if (garmentImagePath && fs.existsSync(garmentImagePath)) {
-        console.log(`Kıyafet görseli yükleniyor: ${garmentImageFilename}`);
-        garmentImage = await this.uploadImage(garmentImagePath, garmentImageFilename);
-      }
-      
-      // 3. API formatına dönüştürme işlemi (eğer modern/export formatındaysa)
-      let apiWorkflow = {};
-      
-      if (workflow.nodes && Array.isArray(workflow.nodes)) {
-        console.log("Modern/Export formatında workflow tespit edildi.");
+      if (reroute39) {
+        console.log("Reroute (#39) node'u tespit edildi. Bağlantılar yeniden düzenleniyor...");
         
-        // Tüm nodes'ları API formatına dönüştür
-        for (const node of workflow.nodes) {
-          apiWorkflow[node.id] = {
-            class_type: node.type,
-            inputs: {},
-            widgets_values: node.widgets_values || []
-          };
+        // Reroute'a gelen ve çıkan bağlantıları bul
+        let incomingLinks = workflowObj.links.filter(link => link[1] === 39); // Reroute'a gelen bağlantılar
+        let outgoingLinks = workflowObj.links.filter(link => link[3] === 39); // Reroute'tan çıkan bağlantılar
+        
+        if (incomingLinks.length > 0 && outgoingLinks.length > 0) {
+          // Reroute'tan gelen bağlantı
+          const sourceNodeId = incomingLinks[0][1]; // Kaynak node ID
+          const sourceSlotId = incomingLinks[0][2]; // Kaynak slot ID
           
-          // Input bağlantılarını kur
-          if (node.inputs) {
-            for (const input of node.inputs) {
-              if (input.link !== null) {
-                const link = workflow.links.find(l => l[0] === input.link);
-                if (link) {
-                  apiWorkflow[node.id].inputs[input.name] = [link[1], link[2]];
-                }
-              }
-            }
+          // Yeni bağlantılar oluştur - doğrudan kaynaktan hedeflere
+          for (const outLink of outgoingLinks) {
+            const targetNodeId = outLink[3]; // Hedef node ID
+            const targetSlotName = outLink[4]; // Hedef slot adı
+            
+            // Yeni bağlantı oluştur
+            // Mevcut bağlantıyı değiştirmek yerine yeni ID'ler kullanarak yeni bağlantılar oluştur
+            const maxLinkId = Math.max(...workflowObj.links.map(link => link[0]));
+            const newLinkId = maxLinkId + 1;
+            
+            // Direkt kaynaktan hedefe bağlantı ekle
+            workflowObj.links.push([newLinkId, sourceNodeId, sourceSlotId, targetNodeId, targetSlotName]);
+            console.log(`Yeni bağlantı oluşturuldu: (${sourceNodeId},${sourceSlotId}) -> (${targetNodeId},${targetSlotName})`);
           }
           
-          // Görüntü yükleme node'larını güncelle
-          if (node.type === "LoadImage") {
-            if (node.title === "Load Human Image") {
-              if (!apiWorkflow[node.id].widgets_values) {
-                apiWorkflow[node.id].widgets_values = [];
-              }
-              apiWorkflow[node.id].widgets_values[0] = humanImage.filename;
-              console.log(`İnsan görseli node'u güncellendi: ${humanImage.filename}`);
-            } else if (node.title === "Load Garment Image" && garmentImage) {
-              if (!apiWorkflow[node.id].widgets_values) {
-                apiWorkflow[node.id].widgets_values = [];
-              }
-              apiWorkflow[node.id].widgets_values[0] = garmentImage.filename;
-              console.log(`Kıyafet görseli node'u güncellendi: ${garmentImage.filename}`);
-            }
-          }
+          // Eski Reroute bağlantılarını kaldır
+          console.log("Eski Reroute bağlantıları kaldırılıyor...");
+          workflowObj.links = workflowObj.links.filter(link => link[1] !== 39 && link[3] !== 39);
+          
+          // Reroute node'unu nodes listesinden kaldır
+          console.log("Reroute (#39) node'u kaldırılıyor...");
+          workflowObj.nodes = workflowObj.nodes.filter(node => node.id !== 39);
         }
-      } else {
-        // Zaten API formatında
-        console.log("API formatında workflow tespit edildi.");
-        apiWorkflow = workflow;
+      }
+      
+      // 2.2) Nodes array'den object'e dönüştürme
+      for (const node of workflowObj.nodes) {
+        apiWorkflow[node.id] = {
+          class_type: node.type,
+          inputs: {},
+          widgets_values: node.widgets_values || []
+        };
         
-        // LoadImage node'larını bul ve güncelle
-        for (const id in apiWorkflow) {
-          if (isNaN(id)) continue;
-          
-          const node = apiWorkflow[id];
-          if (node.class_type === "LoadImage") {
-            if (node.title === "Load Human Image") {
-              if (!node.widgets_values) {
-                node.widgets_values = [];
+        // LoadImage node'larını bul
+        if (node.type === "LoadImage") {
+          if (node.title === "Load Human Image") humanImageNode = { id: node.id, node };
+          if (node.title === "Load Garment Image") garmentImageNode = { id: node.id, node };
+        }
+        
+        // Input bağlantılarını kur
+        if (node.inputs) {
+          for (const input of node.inputs) {
+            if (input.link !== null) {
+              const link = workflowObj.links.find(l => l[0] === input.link);
+              if (link) {
+                apiWorkflow[node.id].inputs[input.name] = [link[1], link[2]];
               }
-              node.widgets_values[0] = humanImage.filename;
-              console.log(`İnsan görseli node'u güncellendi: ${humanImage.filename}`);
-            } else if (node.title === "Load Garment Image" && garmentImage) {
-              if (!node.widgets_values) {
-                node.widgets_values = [];
-              }
-              node.widgets_values[0] = garmentImage.filename;
-              console.log(`Kıyafet görseli node'u güncellendi: ${garmentImage.filename}`);
             }
           }
         }
       }
+    } else {
+      // Zaten API formatında
+      console.log("API formatında workflow tespit edildi.");
+      apiWorkflow = workflowObj;
       
-      // 4. Reroute node'unu kaldır (eğer varsa)
-      if (apiWorkflow['39']) {
-        console.log("Reroute node (#39) kaldırılıyor...");
+      // LoadImage node'larını bul
+      for (const id in apiWorkflow) {
+        const node = apiWorkflow[id];
+        if (!isNaN(id) && node.class_type === "LoadImage") {
+          if (node.title === "Load Human Image") humanImageNode = { id, node };
+          if (node.title === "Load Garment Image") garmentImageNode = { id, node };
+        }
+      }
+      
+      // Reroute node'u varsa kaldır
+      if (apiWorkflow['39'] && apiWorkflow['39'].class_type === "Reroute") {
+        console.log("API formatında Reroute (#39) node'u tespit edildi. Kaldırılıyor...");
         delete apiWorkflow['39'];
         
-        // Reroute referanslarını temizle
+        // Tüm inputlarda Reroute'a referansları güncelle
         for (const id in apiWorkflow) {
           if (isNaN(id)) continue;
+          
           const node = apiWorkflow[id];
           if (node.inputs) {
             for (const inputName in node.inputs) {
               const input = node.inputs[inputName];
               if (Array.isArray(input) && input[0] === 39) {
-                // Bağlantıyı ImageScale (#50) node'una yönlendir
-                console.log(`Node #${id} (${inputName}) Reroute referansı düzeltiliyor`);
+                // Reroute node'unu referans eden bağlantıları ImageScale node'una (#50) yönlendir
+                console.log(`Node #${id} içinde Reroute referansı düzeltiliyor: ${inputName}`);
                 node.inputs[inputName] = [50, 0];
               }
             }
           }
         }
       }
-      
-      // 5. Workflow'u döndür
-      console.log("Workflow başarıyla güncellendi.");
-      return apiWorkflow;
-    } catch (err) {
-      console.error('Workflow güncelleme hatası:', err.message);
-      throw err;
     }
-  }
-
-  // En basit şekilde workflow'u çalıştır
-  async runWorkflow(workflow) {
-    try {
-      if (!this.connected) {
-        await this.connect();
-      }
-      
-      // En basit API isteği oluştur
-      const promptPayload = {
-        prompt: workflow,
-        client_id: this.clientId
-      }
-      
-      // Debug için dosyaya kaydet
-      const dumpPath = path.join(__dirname, `prompt-${Date.now()}.json`);
-      fs.writeFileSync(dumpPath, JSON.stringify(workflow, null, 2), 'utf-8');
-      console.log(`► Prompt JSON debug dosyası: ${dumpPath}`);
-      
-      console.log("ComfyUI'ye prompt gönderiliyor...");
-      
-      // API'ye prompt gönder
-      const response = await axios.post(`${this.comfyUrl}/prompt`, promptPayload);
-      
-      if (response.status === 200) {
-        const promptId = response.data.prompt_id;
-        this.activePromptId = promptId;
-        console.log(`Workflow başlatıldı. Prompt ID: ${promptId}`);
-        return promptId;
-      }
-      
-      throw new Error('Workflow başlatma başarısız: Beklenmeyen yanıt');
-    } catch (error) {
-      console.error('Workflow çalıştırma hatası:', error.message);
-      
-      if (error.response) {
-        console.error('Hata detayları:', {
-          status: error.response.status,
-          statusText: error.response.statusText,
-          data: error.response.data
-        });
-      }
-      
-      throw error;
+    
+    // 3) Görüntüleri ComfyUI'ye yükle
+    const timestamp = Date.now();
+    const humanImageFilename = `human_${timestamp}.png`;
+    const garmentImageFilename = garmentImagePath ? `garment_${timestamp}.jpg` : null;
+    
+    console.log(`İnsan görseli yükleniyor: ${humanImageFilename}`);
+    const humanImage = await this.uploadImage(humanImagePath, humanImageFilename);
+    let garmentImage = null;
+    
+    if (garmentImagePath && fs.existsSync(garmentImagePath)) {
+      console.log(`Kıyafet görseli yükleniyor: ${garmentImageFilename}`);
+      garmentImage = await this.uploadImage(garmentImagePath, garmentImageFilename);
     }
+    
+    // 4) LoadImage node'larını güncelle
+    if (humanImageNode) {
+      const nodeId = humanImageNode.id;
+      if (!apiWorkflow[nodeId].widgets_values) {
+        apiWorkflow[nodeId].widgets_values = [];
+      }
+      apiWorkflow[nodeId].widgets_values[0] = humanImage.filename;
+      console.log(`İnsan görseli node'u güncellendi: Node #${nodeId}, Filename: ${humanImage.filename}`);
+    } else {
+      console.error("Load Human Image node'u bulunamadı!");
+    }
+    
+    if (garmentImage && garmentImageNode) {
+      const nodeId = garmentImageNode.id;
+      if (!apiWorkflow[nodeId].widgets_values) {
+        apiWorkflow[nodeId].widgets_values = [];
+      }
+      apiWorkflow[nodeId].widgets_values[0] = garmentImage.filename;
+      console.log(`Kıyafet görseli node'u güncellendi: Node #${nodeId}, Filename: ${garmentImage.filename}`);
+    } else if (garmentImagePath) {
+      console.warn("Load Garment Image node'u bulunamadı veya kıyafet görseli yüklenemedi!");
+    }
+    
+    // 5) Son bir kontrol daha: Reroute referansları temizle
+    console.log("Son kontrol: Reroute referansları temizleniyor...");
+    for (const id in apiWorkflow) {
+      if (isNaN(id)) continue;
+      
+      const node = apiWorkflow[id];
+      if (node.inputs) {
+        for (const inputName in node.inputs) {
+          const input = node.inputs[inputName];
+          if (Array.isArray(input) && input[0] === 39) {
+            // Reroute node'unu referans eden bağlantıları ImageScale node'una (#50) yönlendir
+            console.log(`Node #${id} içinde Reroute referansı düzeltiliyor: ${inputName}`);
+            node.inputs[inputName] = [50, 0];
+          }
+        }
+      }
+    }
+    
+    // 6) Workflow bütünlük kontrolü
+    const nodeCount = Object.keys(apiWorkflow).filter(id => !isNaN(id)).length;
+    console.log(`Workflow içinde toplam ${nodeCount} node bulundu.`);
+    
+    // 7) Güncellenmiş workflow'u döndür
+    console.log("Workflow başarıyla güncellendi.");
+    return apiWorkflow;
+    
+  } catch (err) {
+    console.error('Workflow güncelleme hatası:', err.message);
+    throw err;
   }
+}
 
   // Sıradaki isteği işle
   async processNextRequest() {

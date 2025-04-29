@@ -1,0 +1,155 @@
+{
+  "12": {
+    "class_type": "PipelineLoader",
+    "inputs": {},
+    "widgets_values": [
+      "bfloat16"
+    ]
+  },
+  "14": {
+    "class_type": "LoadImage",
+    "inputs": {},
+    "widgets_values": [
+      "human_1745923163503.png",
+      "image",
+      ""
+    ]
+  },
+  "15": {
+    "class_type": "LoadImage",
+    "inputs": {},
+    "widgets_values": [
+      "97cf597b-9421-46bf-9498-0e7933a3132f.jpg",
+      "image",
+      ""
+    ]
+  },
+  "27": {
+    "class_type": "SAMModelLoader (segment anything)",
+    "inputs": {},
+    "widgets_values": [
+      "sam_hq_vit_b (379MB)"
+    ]
+  },
+  "28": {
+    "class_type": "GroundingDinoModelLoader (segment anything)",
+    "inputs": {},
+    "widgets_values": [
+      "GroundingDINO_SwinT_OGC (694MB)"
+    ]
+  },
+  "29": {
+    "class_type": "GroundingDinoSAMSegment (segment anything)",
+    "inputs": {
+      "sam_model": [
+        27,
+        0
+      ],
+      "grounding_dino_model": [
+        28,
+        0
+      ],
+      "image": [
+        50,
+        0
+      ]
+    },
+    "widgets_values": [
+      "long sleve shirt",
+      0.3
+    ]
+  },
+  "31": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        29,
+        1
+      ]
+    },
+    "widgets_values": []
+  },
+  "33": {
+    "class_type": "DensePosePreprocessor",
+    "inputs": {
+      "image": [
+        50,
+        0
+      ]
+    },
+    "widgets_values": [
+      "densepose_r50_fpn_dl.torchscript",
+      "Parula (CivitAI)",
+      768
+    ]
+  },
+  "35": {
+    "class_type": "IDM-VTON",
+    "inputs": {
+      "pipeline": [
+        12,
+        0
+      ],
+      "human_img": [
+        50,
+        0
+      ],
+      "pose_img": [
+        33,
+        0
+      ],
+      "mask_img": [
+        31,
+        0
+      ],
+      "garment_img": [
+        15,
+        0
+      ],
+      "width": [
+        46,
+        1
+      ],
+      "height": [
+        46,
+        2
+      ]
+    },
+    "widgets_values": [
+      "long sleeved shirt",
+      "monochrome, lowres, bad anatomy, worst quality, low quality",
+      768,
+      1024,
+      10,
+      0.5,
+      1,
+      135776617428608,
+      "randomize"
+    ]
+  },
+  "46": {
+    "class_type": "GetImageSizeAndCount",
+    "inputs": {
+      "image": [
+        50,
+        0
+      ]
+    },
+    "widgets_values": []
+  },
+  "50": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        14,
+        0
+      ]
+    },
+    "widgets_values": [
+      "lanczos",
+      624,
+      880,
+      "center"
+    ]
+  }
+}

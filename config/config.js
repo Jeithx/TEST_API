@@ -1,34 +1,41 @@
+
+
 require('dotenv').config();
+const path = require('path');
 
 const config = {
   server: {
     port: process.env.PORT || 3000
   },
+  
   api: {
     key: 'app.trendpiyasa.com.pazaryeri-converter',
-    responseEndpoint: 'https://test.api.trendpiyasa.com/v1/api/userbodyinfo'
+    responseEndpoint: 'https://test.api.trendpiyasa.com/v1/api/userBodyInfo'
   },
+  
   rabbitMQ: {
-    hostName: process.env.RABBITMQ_HOSTNAME || '172.23.23.1',
+    hostName: process.env.RABBITMQ_HOSTNAME || '185.4.208.210',
+    port: process.env.RABBITMQ_PORT || 5672,
     userName: process.env.RABBITMQ_USERNAME || 'test_user',
     password: process.env.RABBITMQ_PASSWORD || 'testTrendpiyasa',
     environment: process.env.RABBITMQ_ENVIRONMENT || 'test_env',
-    queueName: 'photo_processing_queue'
+    queueName: 'UserBodyInfo'
   },
   photos: {
     directory: './photos',
-    delay: 5000, // 5 saniye
+    delay: 0, // ComfyUI kullanıldığında gecikme gerekmez
     count: 5
   },
+  
   comfyUI: {
-    enabled: true,                        // ComfyUI entegrasyonunu etkinleştirir/devre dışı bırakır
-    apiUrl: 'http://localhost:8188/api',  // ComfyUI API adresi
-    outputDir: './output',                // Çıktı klasörü
-    workflowPath: './workflow.json',      // Önceden hazırlanmış workflow dosyası
-    useVirtualTryOn: true,                // Virtual Try-On özelliği kullanılsın mı?
-    humanImagePath: './photos/human.jpg', // Varsayılan insan görüntüsü (RabbitMQ'dan gelmeyen durumlarda)
-    garmentDir: './garments'              // Giysi görüntülerinin saklandığı klasör
+    enabled: true,                              // ComfyUI entegrasyonunu etkinleştirir/devre dışı bırakır
+    serverUrl: 'http://127.0.0.1:8188',         // ComfyUI sunucu adresi
+    workflowPath: path.join(__dirname, '../workflow.json'), // Workflow dosyası yolu
+    tempDir: path.join(__dirname, '../temp_images'), // Geçici dosyalar için klasör
+    timeout: 300000                            // İşlem zaman aşımı (ms) - 5 dakika
   }
 };
 
 module.exports = config;
+
+
